@@ -762,11 +762,19 @@ async function generate() {
   const zip = new JSZip();
   const results = [];
 
+  // 新馬場の合算レポート用: 全予約とそのkeptRawRowsを蓄積
+  const shinagawaAllBookings = [];
+  const shinagawaKeptRawRows = new Set();
+
   // ── 新馬場（部屋番号ベース）──
   for (const room of Object.keys(ROOM_PERMIT_MAP).sort()) {
     const permit   = ROOM_PERMIT_MAP[room];
     const rawList  = roomBookings[room] || [];
     const clipped  = processRoom(rawList, period);
+
+    // 全予約をレポート用に蓄積（期間外も含む）
+    const allForRoom = bookingData.filter(b => String(b.room).trim() === room);
+    shinagawaAllBookings.push(...allForRoom);
 
     if (clipped.length === 0) {
       results.push({ label: `新馬場${room}`, permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
@@ -780,23 +788,24 @@ async function generate() {
       removed = res.removed;
     }
 
+    // 報告対象のrawRowをセットに追加
+    kept.forEach(b => shinagawaKeptRawRows.add(b._rawRow));
+
     const occupiedDays = getOccupiedDates(kept).length;
     const csvBytes = buildCSVBytes(permit, periodId, kept);
-    const filename = `新馬場${room}_${periodId}.csv`;
-    zip.file(filename, csvBytes);
-
-    // レポートCSV（全予約 + ステータス列）
-    // _rawRow参照で照合（processRoomがspreadで新オブジェクトを作るため）
-    const allForRoom = bookingData.filter(b => String(b.room).trim() === room);
-    const keptRawRows = new Set(kept.map(b => b._rawRow));
-    zip.file(`新馬場${room}_${periodId}_レポート.csv`,
-      buildReportCSV(allForRoom, keptRawRows, period));
+    zip.file(`新馬場${room}_${periodId}.csv`, csvBytes);
 
     results.push({
       label: `新馬場${room}`, permit, status: removed.length > 0 ? 'reduced' : 'ok',
       kept: kept.length, removed: removed.length,
       days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
     });
+  }
+
+  // 新馬場の合算レポートCSVを1ファイルで出力
+  if (shinagawaAllBookings.length > 0) {
+    zip.file(`新馬場_${periodId}_レポート.csv`,
+      buildReportCSV(shinagawaAllBookings, shinagawaKeptRawRows, period));
   }
 
   // ── 一戸建て物件（物件名ベース）──
