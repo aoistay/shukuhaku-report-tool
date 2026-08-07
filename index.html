@@ -216,7 +216,7 @@ h1 {
 <body>
 <div class="container">
   <h1>🏨 宿泊実績報告ツール</h1>
-  <div class="subtitle">新馬場（trias181）・R.Shinjuku — 民泊届出番号対象物件のCSVを自動生成します</div>
+  <div class="subtitle">新馬場・La Vie Itabashi・Vista FUJIMI・R.Shinjuku — 民泊届出番号対象物件のCSVを自動生成します</div>
 
   <!-- Step 1: File Upload -->
   <div class="card">
@@ -319,6 +319,39 @@ const ROOM_PERMIT_MAP = {
   '503': 'M130056433',
   '504': 'M130056434',
 };
+
+// =====================================================================
+// 設定: 新建物（物件名＋部屋番号で識別）
+// keyword: F列の物件名に含まれる文字列（小文字・部分一致）
+// prefix: 出力ファイル名のプレフィックス
+// rooms: 部屋番号 → 届出番号（旅館業の部屋は含まない）
+// =====================================================================
+const BUILDING_MAP = [
+  {
+    keyword: 'la vie itabashi',
+    name: 'LaVieItabashi',
+    prefix: 'LaVieItabashi',
+    rooms: {
+      '301': 'M130065657',
+      '302': 'M130065658',
+      '501': 'M130065659',
+      '502': 'M130065660',
+    }
+  },
+  {
+    keyword: 'vista fujimi',
+    name: 'VistaFujimi',
+    prefix: 'VistaFujimi',
+    rooms: {
+      '201': 'M130065328',
+      '202': 'M130065329',
+      '203': 'M130065330',
+      '401': 'M130065331',
+      '402': 'M130065332',
+      '403': 'M130065333',
+    }
+  },
+];
 
 // =====================================================================
 // 設定: 物件名（F列）→ 届出番号マッピング（部屋番号がない一戸建て物件）
@@ -739,19 +772,31 @@ async function generate() {
 
   // ① 部屋番号ベース（新馬場）の集計
   const roomBookings = {};
-  // ② 物件名ベース（一戸建て）の集計
+  // ② 新建物（BUILDING_MAP）の集計: buildingName → { roomNum → bookings }
+  const buildingBookings = {};
+  // ③ 物件名ベース（一戸建て）の集計
   const propBookings = {};  // key: PROPERTY_PERMIT_MAP のname
 
   for (const b of bookingData) {
     const room = String(b.room).trim();
+    const pname = String(b.propertyName ?? '').toLowerCase();
+
     if (room) {
-      // H列に値がある → 部屋番号で識別
-      if (!ROOM_PERMIT_MAP[room]) continue;
-      if (!roomBookings[room]) roomBookings[room] = [];
-      roomBookings[room].push(b);
+      // まずBUILDING_MAPで物件名を照合（新建物）
+      const building = BUILDING_MAP.find(bldg => pname.includes(bldg.keyword));
+      if (building) {
+        if (!building.rooms[room]) continue; // 旅館業等は除外
+        if (!buildingBookings[building.name]) buildingBookings[building.name] = {};
+        if (!buildingBookings[building.name][room]) buildingBookings[building.name][room] = [];
+        buildingBookings[building.name][room].push(b);
+      } else {
+        // 物件名でマッチしなかった → 新馬場として部屋番号で識別
+        if (!ROOM_PERMIT_MAP[room]) continue;
+        if (!roomBookings[room]) roomBookings[room] = [];
+        roomBookings[room].push(b);
+      }
     } else {
-      // H列が空 → F列（物件名）で識別
-      const pname = String(b.propertyName ?? '').toLowerCase();
+      // H列が空 → F列（物件名）で識別（一戸建て）
       const matched = PROPERTY_PERMIT_MAP.find(p => pname.includes(p.keyword));
       if (!matched) continue;
       if (!propBookings[matched.name]) propBookings[matched.name] = [];
@@ -772,8 +817,12 @@ async function generate() {
     const rawList  = roomBookings[room] || [];
     const clipped  = processRoom(rawList, period);
 
-    // 全予約をレポート用に蓄積（期間外も含む）
-    const allForRoom = bookingData.filter(b => String(b.room).trim() === room);
+    // 全予約をレポート用に蓄積（期間外も含む、新建物は除外）
+    const allForRoom = bookingData.filter(b => {
+      if (String(b.room).trim() !== room) return false;
+      const pn = String(b.propertyName ?? '').toLowerCase();
+      return !BUILDING_MAP.some(bldg => pn.includes(bldg.keyword));
+    });
     shinagawaAllBookings.push(...allForRoom);
 
     if (clipped.length === 0) {
@@ -806,6 +855,56 @@ async function generate() {
   if (shinagawaAllBookings.length > 0) {
     zip.file(`新馬場_${periodId}_レポート.csv`,
       buildReportCSV(shinagawaAllBookings, shinagawaKeptRawRows, period));
+  }
+
+  // ── 新建物（BUILDING_MAP: 物件名＋部屋番号ベース）──
+  for (const bldg of BUILDING_MAP) {
+    const bldgRooms = buildingBookings[bldg.name] || {};
+    const bldgAllBookings = [];
+    const bldgKeptRawRows = new Set();
+
+    for (const room of Object.keys(bldg.rooms).sort()) {
+      const permit  = bldg.rooms[room];
+      const rawList = bldgRooms[room] || [];
+      const clipped = processRoom(rawList, period);
+
+      // レポート用に全予約を蓄積（期間外も含む）
+      const allForRoom = bookingData.filter(b =>
+        String(b.room).trim() === room &&
+        String(b.propertyName ?? '').toLowerCase().includes(bldg.keyword)
+      );
+      bldgAllBookings.push(...allForRoom);
+
+      if (clipped.length === 0) {
+        results.push({ label: `${bldg.prefix}${room}`, permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
+        continue;
+      }
+
+      let kept = clipped, removed = [];
+      if (reduce) {
+        const res = applyHalfRule(clipped, period.totalDays);
+        kept = res.kept;
+        removed = res.removed;
+      }
+
+      kept.forEach(b => bldgKeptRawRows.add(b._rawRow));
+
+      const occupiedDays = getOccupiedDates(kept).length;
+      const csvBytes = buildCSVBytes(permit, periodId, kept);
+      zip.file(`${bldg.prefix}${room}_${periodId}.csv`, csvBytes);
+
+      results.push({
+        label: `${bldg.prefix}${room}`, permit, status: removed.length > 0 ? 'reduced' : 'ok',
+        kept: kept.length, removed: removed.length,
+        days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
+      });
+    }
+
+    // 建物合算レポートCSVを1ファイルで出力
+    if (bldgAllBookings.length > 0) {
+      zip.file(`${bldg.prefix}_${periodId}_レポート.csv`,
+        buildReportCSV(bldgAllBookings, bldgKeptRawRows, period));
+    }
   }
 
   // ── 一戸建て物件（物件名ベース）──
