@@ -1374,6 +1374,9 @@ async function generate() {
     const occupiedDays = getOccupiedDates(kept).length;
 
     if (clipped.length === 0) {
+      // 神楽坂belle villeは予約ゼロでも届出CSVを出力する必要がある
+      zip.file(`${group.listingName}_${periodId}.csv`,
+        buildCSVBytes(group.permit, periodId, []));
       results.push({
         label: group.listingName, permit: group.permit, status: 'nodata',
         kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2)
