@@ -211,12 +211,59 @@ h1 {
   margin-top: 10px;
   line-height: 1.6;
 }
+
+/* ── Airbnb リスティング設定カード ── */
+.airbnb-file-row {
+  border: 1px solid #ffe4e6;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: #fff8f8;
+}
+.airbnb-file-row:last-child { margin-bottom: 0; }
+.airbnb-filename {
+  font-size: .84rem;
+  font-weight: 600;
+  color: #c9184a;
+  margin-bottom: 10px;
+}
+.airbnb-sheets-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.airbnb-sheets-row .field { min-width: 200px; }
+.sheets-file-label {
+  display: inline-block;
+  padding: 7px 12px;
+  border: 1px solid #dde1ed;
+  border-radius: 6px;
+  font-size: .82rem;
+  cursor: pointer;
+  background: #fafbff;
+  color: #555;
+  transition: border-color .15s;
+}
+.sheets-file-label:hover { border-color: #4361ee; }
+.sheets-file-name {
+  font-size: .76rem;
+  color: #2ec4b6;
+  margin-top: 4px;
+}
+.airbnb-info {
+  font-size: .76rem;
+  color: #999;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.airbnb-info.warn { color: #e63946; }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>🏨 宿泊実績報告ツール</h1>
-  <div class="subtitle">新馬場・La Vie Itabashi・Vista FUJIMI・R.Shinjuku — 民泊届出番号対象物件のCSVを自動生成します</div>
+  <div class="subtitle">新馬場・La Vie Itabashi・Vista FUJIMI・神楽坂belle ville・R.Shinjuku — 民泊届出番号対象物件のCSVを自動生成します</div>
 
   <!-- Step 1: File Upload -->
   <div class="card">
@@ -226,12 +273,25 @@ h1 {
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
       <div class="drop-icon">📂</div>
       <div class="drop-text">ここをクリック、またはファイルをドラッグ＆ドロップ</div>
-      <div class="drop-sub">CSV・Excel（.xlsx / .xls）に対応　※ 複数ファイル同時選択・ドロップ可</div>
+      <div class="drop-sub">AirHost・Airbnb の CSV / Excel（複数ファイル同時選択・ドロップ可）</div>
       <div class="file-status" id="fileStatus"></div>
     </div>
     <div id="fileList" style="margin-top:8px;font-size:.8rem;color:#555;"></div>
     <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" multiple style="display:none">
     <div class="file-error" id="fileError"></div>
+  </div>
+
+  <!-- Airbnb リスティング設定（Airbnbファイル検出時のみ表示） -->
+  <div class="card" id="airbnbConfigCard" style="display:none">
+    <div class="card-title">
+      <span class="step-badge" style="background:#c9184a">✈</span>
+      Airbnb リスティング設定
+    </div>
+    <div style="font-size:.8rem;color:#888;margin-bottom:12px">
+      アップロードされた Airbnb ファイルごとにリスティングを選択してください。
+      宿泊者名簿（国籍情報）は URL または CSV ファイルで提供できます。
+    </div>
+    <div id="airbnbGroupList"></div>
   </div>
 
   <!-- Step 2: Period -->
@@ -323,8 +383,6 @@ const ROOM_PERMIT_MAP = {
 // =====================================================================
 // 設定: 新建物（物件名＋部屋番号で識別）
 // keyword: F列の物件名に含まれる文字列（小文字・部分一致）
-// prefix: 出力ファイル名のプレフィックス
-// rooms: 部屋番号 → 届出番号（旅館業の部屋は含まない）
 // =====================================================================
 const BUILDING_MAP = [
   {
@@ -355,10 +413,27 @@ const BUILDING_MAP = [
 
 // =====================================================================
 // 設定: 物件名（F列）→ 届出番号マッピング（部屋番号がない一戸建て物件）
-// keyword: F列の物件名に含まれる文字列（小文字・部分一致）
 // =====================================================================
 const PROPERTY_PERMIT_MAP = [
   { keyword: 'r.shinjuku', permit: 'M130033115', name: 'R.Shinjuku' },
+];
+
+// =====================================================================
+// 設定: Airbnb リスティング（神楽坂belle ville）
+// 3・10月 → 通常リスティング（A〜E）
+// 4〜9月  → プラスリスティング（A+〜E+）
+// =====================================================================
+const AIRBNB_LISTING_MAP = [
+  { name: '神楽坂A',  permit: 'M130039686' },
+  { name: '神楽坂A+', permit: 'M130039688' },
+  { name: '神楽坂B',  permit: 'M130039687' },
+  { name: '神楽坂B+', permit: 'M130039689' },
+  { name: '神楽坂C',  permit: 'M130039690' },
+  { name: '神楽坂C+', permit: 'M130039691' },
+  { name: '神楽坂D',  permit: 'M130039693' },
+  { name: '神楽坂D+', permit: 'M130039694' },
+  { name: '神楽坂E',  permit: 'M130039696' },
+  { name: '神楽坂E+', permit: 'M130039716' },
 ];
 
 // 国籍列（CSVヘッダーの順）
@@ -369,60 +444,61 @@ const NAT_COLS = [
 ];
 
 // 国籍マッピング（英語表記 → 日本語列名）
+// 国名（name）と形容詞形（adjective）の両方を登録
 const NAT_MAP = {
   // 日本
-  'japan':'日本','jp':'日本','日本':'日本',
-  // 韓国 — Airbnb: "Korea (Republic of)", Booking.com: "Korea, Republic of" など
-  'korea':'韓国','south korea':'韓国','kr':'韓国','한국':'韓国',
+  'japan':'日本','japanese':'日本','jp':'日本','日本':'日本',
+  // 韓国
+  'korea':'韓国','korean':'韓国','south korea':'韓国','kr':'韓国','한국':'韓国',
   'korea, republic of':'韓国','korea (republic of)':'韓国',
   'republic of korea':'韓国',"korea, republic of (south korea)":'韓国',
   // 台湾
-  'taiwan':'台湾','tw':'台湾','台湾':'台湾',
+  'taiwan':'台湾','taiwanese':'台湾','tw':'台湾','台湾':'台湾',
   'taiwan, province of china':'台湾','taiwan (province of china)':'台湾',
   // 香港
   'hong kong':'香港','hk':'香港','香港':'香港',
   'hong kong sar china':'香港','hong kong s.a.r., china':'香港',
-  'hong kong, china':'香港',
+  'hong kong, china':'香港','hong konger':'香港',
   // 中国
-  'china':'中国','cn':'中国','中国':'中国',
+  'china':'中国','chinese':'中国','cn':'中国','中国':'中国',
   "people's republic of china":'中国','china mainland':'中国',
   'china, mainland':'中国',
   // タイ
-  'thailand':'タイ','th':'タイ','タイ':'タイ',
+  'thailand':'タイ','thai':'タイ','th':'タイ','タイ':'タイ',
   // シンガポール
-  'singapore':'シンガポール','sg':'シンガポール','シンガポール':'シンガポール',
+  'singapore':'シンガポール','singaporean':'シンガポール','sg':'シンガポール','シンガポール':'シンガポール',
   // マレーシア
-  'malaysia':'マレーシア','my':'マレーシア','マレーシア':'マレーシア',
+  'malaysia':'マレーシア','malaysian':'マレーシア','my':'マレーシア','マレーシア':'マレーシア',
   // インドネシア
-  'indonesia':'インドネシア','id':'インドネシア','インドネシア':'インドネシア',
+  'indonesia':'インドネシア','indonesian':'インドネシア','id':'インドネシア','インドネシア':'インドネシア',
   // フィリピン
-  'philippines':'フィリピン','ph':'フィリピン','フィリピン':'フィリピン',
-  'the philippines':'フィリピン',
+  'philippines':'フィリピン','filipino':'フィリピン','philippine':'フィリピン','pilipino':'フィリピン',
+  'ph':'フィリピン','フィリピン':'フィリピン','the philippines':'フィリピン',
   // ベトナム
-  'vietnam':'ベトナム','viet nam':'ベトナム','vn':'ベトナム','ベトナム':'ベトナム',
+  'vietnam':'ベトナム','vietnamese':'ベトナム','viet nam':'ベトナム','vn':'ベトナム','ベトナム':'ベトナム',
   // インド
-  'india':'インド','in':'インド','インド':'インド',
-  // 英国 — "United Kingdom of Great Britain and Northern Ireland" など複数形式
-  'united kingdom':'英国','uk':'英国','gb':'英国','英国':'英国',
+  'india':'インド','indian':'インド','in':'インド','インド':'インド',
+  // 英国
+  'united kingdom':'英国','british':'英国','uk':'英国','gb':'英国','英国':'英国',
   'great britain':'英国','england':'英国','britain':'英国',
   'united kingdom of great britain and northern ireland':'英国',
   // ドイツ
-  'germany':'ドイツ','de':'ドイツ','ドイツ':'ドイツ','deutschland':'ドイツ',
+  'germany':'ドイツ','german':'ドイツ','de':'ドイツ','ドイツ':'ドイツ','deutschland':'ドイツ',
   // フランス
-  'france':'フランス','fr':'フランス','フランス':'フランス',
+  'france':'フランス','french':'フランス','fr':'フランス','フランス':'フランス',
   // イタリア
-  'italy':'イタリア','it':'イタリア','イタリア':'イタリア','italia':'イタリア',
+  'italy':'イタリア','italian':'イタリア','it':'イタリア','イタリア':'イタリア','italia':'イタリア',
   // スペイン
-  'spain':'スペイン','es':'スペイン','スペイン':'スペイン','españa':'スペイン',
+  'spain':'スペイン','spanish':'スペイン','es':'スペイン','スペイン':'スペイン','españa':'スペイン',
   // ロシア
-  'russia':'ロシア','ru':'ロシア','ロシア':'ロシア','russian federation':'ロシア',
+  'russia':'ロシア','russian':'ロシア','ru':'ロシア','ロシア':'ロシア','russian federation':'ロシア',
   // 米国
-  'united states':'米国','united states of america':'米国',
+  'united states':'米国','american':'米国','united states of america':'米国',
   'usa':'米国','us':'米国','米国':'米国','america':'米国',
   // カナダ
-  'canada':'カナダ','ca':'カナダ','カナダ':'カナダ',
+  'canada':'カナダ','canadian':'カナダ','ca':'カナダ','カナダ':'カナダ',
   // オーストラリア
-  'australia':'オーストラリア','au':'オーストラリア','オーストラリア':'オーストラリア',
+  'australia':'オーストラリア','australian':'オーストラリア','au':'オーストラリア','オーストラリア':'オーストラリア',
 };
 
 // CSVヘッダーのShift-JISバイト列（固定値 - 事前計算済み）
@@ -444,8 +520,9 @@ const HEADER_SJIS = new Uint8Array([
 // =====================================================================
 // 状態
 // =====================================================================
-let bookingData    = null;   // パース済み予約データ（全ファイル結合）
+let bookingData    = null;   // AirHostのパース済み予約データ（全ファイル結合）
 let originalHeaders = null;  // 元データのヘッダー行（レポート用）
+let airbnbGroups   = [];     // Airbnbグループ [{filename, listingName, permit, bookings, sheetsUrl, sheetsFile}]
 let currentOption  = 'reduce';
 let generatedZipBlob = null;
 
@@ -481,27 +558,60 @@ async function handleFiles(fileList) {
   listEl.textContent   = '';
   bookingData     = null;
   originalHeaders = null;
+  airbnbGroups    = [];
 
   try {
-    const results = await Promise.all([...fileList].map(f => readOneFile(f)));
-    const allParsed = results.flatMap(r => r.rows);
+    const allFiles = [...fileList];
+    const results  = await Promise.all(allFiles.map(f => readOneFile(f)));
 
-    if (allParsed.length === 0) {
-      errorEl.textContent = 'データが読み込めませんでした。列を確認してください（D:チェックイン E:チェックアウト H:部屋番号 L:国籍 Q:ゲスト数）';
+    const airHostResults  = results.filter(r => !r.isAirbnb);
+    const airbnbResults   = results.filter(r =>  r.isAirbnb);
+
+    // AirHostデータを結合
+    const airHostParsed = airHostResults.flatMap(r => r.rows);
+    originalHeaders = airHostResults[0]?.headers || null;
+    bookingData = airHostParsed;
+
+    // Airbnbグループを作成
+    airbnbGroups = airbnbResults.map((r, i) => {
+      const file = allFiles[results.indexOf(r)]; // 元のfileオブジェクト
+      return {
+        filename: file ? file.name : `airbnb_${i+1}.csv`,
+        listingName: '',
+        permit: '',
+        bookings: r.rows,
+        sheetsUrl: '',
+        sheetsFile: null,
+        sheetsFileName: '',
+      };
+    });
+
+    const totalCount = airHostParsed.length + airbnbGroups.reduce((s,g) => s + g.bookings.length, 0);
+    if (totalCount === 0) {
+      errorEl.textContent = 'データが読み込めませんでした。列を確認してください。';
       statusEl.textContent = '';
       return;
     }
 
-    // ヘッダーは最初のファイルのものを使用
-    originalHeaders = results[0].headers;
-    bookingData = allParsed;
     dropZone.classList.add('loaded');
-    statusEl.textContent = `✓ ${fileList.length}ファイル  計${allParsed.length.toLocaleString()}件の予約を読み込みました`;
+    const parts = [];
+    if (airHostParsed.length > 0) parts.push(`AirHost: ${airHostParsed.length}件`);
+    if (airbnbGroups.length > 0) {
+      const ab = airbnbGroups.reduce((s,g) => s + g.bookings.length, 0);
+      parts.push(`Airbnb: ${ab}件（${airbnbGroups.length}ファイル）`);
+    }
+    statusEl.textContent = `✓ ${fileList.length}ファイル  ${parts.join('  ')}`;
 
-    // 読み込んだファイル一覧表示
-    listEl.innerHTML = [...fileList].map((f, i) =>
-      `<span style="margin-right:12px">📄 ${f.name}（${results[i].rows.length}件）</span>`
-    ).join('');
+    // ファイル一覧表示
+    listEl.innerHTML = allFiles.map((f, i) => {
+      const r = results[i];
+      const tag = r.isAirbnb ? ' <span style="color:#c9184a;font-size:.72rem">[Airbnb]</span>' : '';
+      return `<span style="margin-right:12px">📄 ${f.name}（${r.rows.length}件）${tag}</span>`;
+    }).join('');
+
+    // Airbnb設定UIを更新
+    updateAirbnbConfigUI();
+
   } catch(err) {
     errorEl.textContent = 'エラー: ' + err.message;
     statusEl.textContent = '';
@@ -513,7 +623,6 @@ function readOneFile(file) {
     const reader = new FileReader();
     reader.onload = e => {
       try {
-        // CSVはUTF-8で明示デコード、Excelはバイナリ読み込み
         let wb;
         if (file.name.toLowerCase().endsWith('.csv')) {
           const text = new TextDecoder('utf-8').decode(e.target.result);
@@ -525,32 +634,73 @@ function readOneFile(file) {
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true });
 
         const headers = rows[0] ? rows[0].map(h => String(h ?? '')) : [];
-        const parsed  = [];
 
-        for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          if (!row || row.length < 5) continue;
+        // Airbnb CSV の検出: 「確認コード」と「開始日」列が存在するか
+        const isAirbnb = headers.some(h => h.includes('確認コード')) &&
+                         headers.some(h => h.includes('開始日'));
 
-          const checkin      = parseDate(row[3]);
-          const checkout     = parseDate(row[4]);
-          const propertyName = String(row[5]  ?? '').trim();
-          const room         = String(row[7]  ?? '').trim();
-          const nat          = String(row[11] ?? '').trim();
-          const status       = String(row[13] ?? '').trim(); // N列: 状態
-          const guests       = parseInt(row[16]) || 1;
+        if (isAirbnb) {
+          // ── Airbnb CSV パース ──
+          // 列: [0]確認コード [1]ステータス [4]大人 [5]子ども [6]乳幼児
+          //     [7]開始日(チェックイン) [8]終了日(チェックアウト) [11]リスティング
+          const parsed = [];
+          for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row || row.length < 9) continue;
+            const status = String(row[1] ?? '').trim();
+            // キャンセル・リクエスト中などは除外
+            if (status.includes('キャンセル') || status.includes('リクエスト') || status.includes('承認待ち')) continue;
+            if (!status) continue;
 
-          if (!checkin || !checkout) continue;
-          if (checkout <= checkin) continue;
-          if (!room && !propertyName) continue;
-          if (status && status !== '確認済み') continue; // 確認済み以外は除外
+            const adults   = parseInt(row[4]) || 0;
+            const children = parseInt(row[5]) || 0;
+            const infants  = parseInt(row[6]) || 0;
+            const checkin  = parseDate(row[7]);
+            const checkout = parseDate(row[8]);
+            const guests   = adults + children + infants || 1;
 
-          parsed.push({
-            checkin, checkout, room, propertyName,
-            nationality: nat, guests,
-            _rawRow: row
-          });
+            if (!checkin || !checkout) continue;
+            if (checkout <= checkin) continue;
+
+            parsed.push({
+              checkin, checkout,
+              room: '', propertyName: '',
+              nationality: '',
+              nationalityList: null, // Sheets照合後に設定
+              guests,
+              _rawRow: row
+            });
+          }
+          resolve({ isAirbnb: true, headers, rows: parsed });
+
+        } else {
+          // ── AirHost CSV パース（既存ロジック）──
+          const parsed = [];
+          for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row || row.length < 5) continue;
+
+            const checkin      = parseDate(row[3]);
+            const checkout     = parseDate(row[4]);
+            const propertyName = String(row[5]  ?? '').trim();
+            const room         = String(row[7]  ?? '').trim();
+            const nat          = String(row[11] ?? '').trim();
+            const status       = String(row[13] ?? '').trim();
+            const guests       = parseInt(row[16]) || 1;
+
+            if (!checkin || !checkout) continue;
+            if (checkout <= checkin) continue;
+            if (!room && !propertyName) continue;
+            if (status && status !== '確認済み') continue;
+
+            parsed.push({
+              checkin, checkout, room, propertyName,
+              nationality: nat, guests,
+              _rawRow: row
+            });
+          }
+          resolve({ isAirbnb: false, headers, rows: parsed });
         }
-        resolve({ headers, rows: parsed });
       } catch(err) { reject(err); }
     };
     reader.onerror = () => reject(new Error('ファイル読み込みエラー'));
@@ -559,8 +709,92 @@ function readOneFile(file) {
 }
 
 // =====================================================================
+// Airbnb 設定 UI
+// =====================================================================
+function updateAirbnbConfigUI() {
+  const card = document.getElementById('airbnbConfigCard');
+  const list = document.getElementById('airbnbGroupList');
+
+  if (airbnbGroups.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = 'block';
+  list.innerHTML = '';
+
+  airbnbGroups.forEach((group, idx) => {
+    const div = document.createElement('div');
+    div.className = 'airbnb-file-row';
+    div.innerHTML = `
+      <div class="airbnb-filename">✈ ${escapeHtml(group.filename)}</div>
+      <div class="row">
+        <div class="field">
+          <label>リスティング</label>
+          <select id="ab_listing_${idx}" onchange="setAirbnbListing(${idx}, this.value)">
+            <option value="">-- 選択してください --</option>
+            ${AIRBNB_LISTING_MAP.map(l =>
+              `<option value="${l.name}">${l.name}（${l.permit}）</option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="airbnb-sheets-row">
+        <div class="field">
+          <label>宿泊者名簿 URL（任意・国籍取得用）</label>
+          <input type="text" id="ab_sheetsurl_${idx}"
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+            oninput="setAirbnbSheetsUrl(${idx}, this.value)"
+            style="font-size:.8rem">
+          <div class="airbnb-info">Google Sheets の URL を貼り付けると自動取得を試みます</div>
+        </div>
+        <div class="field">
+          <label>または CSV をアップロード</label>
+          <label class="sheets-file-label" onclick="document.getElementById('ab_sheetsfile_${idx}').click()">
+            📄 ファイルを選択
+          </label>
+          <input type="file" id="ab_sheetsfile_${idx}" accept=".csv"
+            style="display:none"
+            onchange="setAirbnbSheetsFile(${idx}, this.files[0])">
+          <div class="sheets-file-name" id="ab_sheetsfilename_${idx}"></div>
+        </div>
+      </div>
+      <div class="airbnb-info" id="ab_sheets_warn_${idx}" style="display:none"></div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function setAirbnbListing(idx, name) {
+  airbnbGroups[idx].listingName = name;
+  const m = AIRBNB_LISTING_MAP.find(l => l.name === name);
+  airbnbGroups[idx].permit = m ? m.permit : '';
+}
+
+function setAirbnbSheetsUrl(idx, url) {
+  airbnbGroups[idx].sheetsUrl = url.trim();
+}
+
+function setAirbnbSheetsFile(idx, file) {
+  if (!file) return;
+  airbnbGroups[idx].sheetsFile = file;
+  airbnbGroups[idx].sheetsFileName = file.name;
+  const el = document.getElementById(`ab_sheetsfilename_${idx}`);
+  if (el) el.textContent = '✓ ' + file.name;
+}
+
+// =====================================================================
 // 日付ユーティリティ
 // =====================================================================
+const MONTH_NAMES = {
+  'jan':0,'feb':1,'mar':2,'apr':3,'may':4,'jun':5,
+  'jul':6,'aug':7,'sep':8,'oct':9,'nov':10,'dec':11
+};
+
 function parseDate(val) {
   if (!val && val !== 0) return null;
   // Excelシリアル値
@@ -574,8 +808,18 @@ function parseDate(val) {
     return new Date(val.getFullYear(), val.getMonth(), val.getDate());
   }
   const s = String(val).trim();
+  // YYYY/MM/DD or YYYY-MM-DD
   const m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
   if (m) return new Date(+m[1], +m[2]-1, +m[3]);
+  // DD-Mon-YYYY（Google Sheets形式: "09-Jul-2026"）
+  const m2 = s.match(/^(\d{1,2})-([a-z]{3})-(\d{4})$/i);
+  if (m2) {
+    const month = MONTH_NAMES[m2[2].toLowerCase()];
+    if (month !== undefined) return new Date(+m2[3], month, +m2[1]);
+  }
+  // MM/DD/YYYY
+  const m3 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m3) return new Date(+m3[3], +m3[1]-1, +m3[2]);
   return null;
 }
 
@@ -588,6 +832,11 @@ function dateStr(d) {
   const m = String(d.getMonth()+1).padStart(2,'0');
   const day = String(d.getDate()).padStart(2,'0');
   return `${y}/${m}/${day}`;
+}
+
+function makeDateKey(d) {
+  // 照合用キー YYYY-M-D（ゼロパディングなし）
+  return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
 }
 
 // =====================================================================
@@ -609,14 +858,13 @@ function processRoom(rawBookings, period) {
   const { startDate, endDate } = period;
   const dayAfterEnd = addDays(endDate, 1);
 
-  // 期間と重複する予約のみ + 期間内にクリップ
   const bookings = [];
   for (const b of rawBookings) {
-    if (b.checkout <= startDate) continue;      // 期間前に終了
-    if (b.checkin >= dayAfterEnd) continue;     // 期間後に開始
+    if (b.checkout <= startDate) continue;
+    if (b.checkin >= dayAfterEnd) continue;
 
-    const effStart = b.checkin < startDate ? startDate : b.checkin;
-    const effEnd   = b.checkout > dayAfterEnd  ? dayAfterEnd  : b.checkout;
+    const effStart  = b.checkin < startDate ? startDate : b.checkin;
+    const effEnd    = b.checkout > dayAfterEnd ? dayAfterEnd : b.checkout;
     const effNights = Math.round((effEnd - effStart) / 86400000);
     if (effNights <= 0) continue;
 
@@ -642,7 +890,6 @@ function applyHalfRule(bookings, totalDays) {
 
   if (occupied <= maxOccupied) return { kept: current, removed: [] };
 
-  // チェックイン日が遅い順（新しい予約）から削除
   const sorted = [...bookings].sort((a, b) => b.checkin - a.checkin);
   const removed = [];
 
@@ -657,37 +904,138 @@ function applyHalfRule(bookings, totalDays) {
 }
 
 function mapNat(nat) {
-  // ノーブレークスペース等の特殊空白を通常スペースに統一してから照合
-  const key = nat.replace(/[  -​ 　]/g, ' ').toLowerCase().trim();
+  const key = (nat || '').replace(/[  -​ 　]/g, ' ').toLowerCase().trim();
   return NAT_MAP[key] || 'その他';
 }
 
 // =====================================================================
-// レポートCSV生成（UTF-8 BOM）
+// 宿泊者名簿（Google Sheets）の取得・パース
+// =====================================================================
+
+// Google Sheets URL から CSV を fetch（Googleログイン済みの場合のみ動作）
+async function fetchSheetsData(url) {
+  const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!match) return null;
+  const id = match[1];
+  try {
+    const resp = await fetch(
+      `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=0`,
+      { credentials: 'include' }
+    );
+    if (!resp.ok) return null;
+    const text = await resp.text();
+    return parseSheetsCSV(text);
+  } catch(e) {
+    return null;
+  }
+}
+
+// アップロードされた Sheets CSV ファイルをパース
+async function loadSheetsFile(file) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      // UTF-8 BOM 対応
+      const text = new TextDecoder('utf-8').decode(e.target.result);
+      resolve(parseSheetsCSV(text));
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// 宿泊者名簿 CSV をパースしてチェックイン日→[国籍, ...] のマップを返す
+// 列構成:
+//   [3]  ゲスト数
+//   [4]  チェックイン日
+//   [6]  チェックアウト日
+//   [12] ゲスト1国籍
+//   [21] ゲスト2国籍
+//   [30] ゲスト3国籍
+//   [39] ゲスト4国籍
+//   [48] ゲスト5国籍
+function parseSheetsCSV(text) {
+  if (!text || !text.trim()) return {};
+
+  // 簡易 CSV パーサ（ダブルクォート対応）
+  const rows = [];
+  let row = [], cell = '', inQ = false;
+  const t = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i <= t.length; i++) {
+    const c = i < t.length ? t[i] : '\n'; // 末尾に改行を追加して最終行を処理
+    if (inQ) {
+      if (c === '"' && t[i+1] === '"') { cell += '"'; i++; }
+      else if (c === '"') { inQ = false; }
+      else { cell += c; }
+    } else {
+      if (c === '"') { inQ = true; }
+      else if (c === ',') { row.push(cell.trim()); cell = ''; }
+      else if (c === '\n') {
+        row.push(cell.trim()); cell = '';
+        if (row.some(v => v)) rows.push(row);
+        row = [];
+      } else { cell += c; }
+    }
+  }
+
+  if (rows.length < 2) return {};
+
+  const CI_IDX   = 4;                    // チェックイン列
+  const NAT_IDXS = [12, 21, 30, 39, 48]; // ゲスト1〜5 の国籍列
+
+  const lookup = {};
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const ciRaw = r[CI_IDX];
+    if (!ciRaw) continue;
+    const d = parseDate(ciRaw);
+    if (!d) continue;
+    const key  = makeDateKey(d);
+    const nats = NAT_IDXS.map(j => (r[j] || '').trim()).filter(Boolean);
+    if (nats.length > 0) {
+      // 同日チェックイン複数行の場合はマージ
+      if (lookup[key]) {
+        lookup[key] = [...lookup[key], ...nats];
+      } else {
+        lookup[key] = nats;
+      }
+    }
+  }
+  return lookup;
+}
+
+// Airbnb 予約に国籍リストを付与
+function enrichFromSheets(bookings, sheetsLookup) {
+  for (const b of bookings) {
+    const key = makeDateKey(b.checkin);
+    if (sheetsLookup[key] && sheetsLookup[key].length > 0) {
+      b.nationalityList = sheetsLookup[key];
+    }
+  }
+}
+
+// =====================================================================
+// レポートCSV生成（UTF-8 BOM）— AirHost 用
 // =====================================================================
 function buildReportCSV(allRoomBookings, keptSet, period) {
   const { startDate, endDate } = period;
   const dayAfterEnd = addDays(endDate, 1);
 
-  // ヘッダー行: 元の列 + ステータス列
   const headers = originalHeaders || [];
   const headerRow = [...headers, '報告ステータス'].join(',');
 
   const dataRows = allRoomBookings.map(b => {
-    // 期間との重複チェック
     const overlaps = b.checkout > startDate && b.checkin < dayAfterEnd;
     let status;
     if (!overlaps) {
       status = '対象外（期間外）';
     } else if (keptSet.has(b._rawRow)) {
-      // 期間内クリップが発生しているか
       const clipped = b.checkin < startDate || b.checkout > dayAfterEnd;
       status = clipped ? '報告対象（日付修正あり）' : '報告対象';
     } else {
       status = '対象外（半分ルール）';
     }
 
-    // 元行の各セルをCSV安全な文字列に変換
     const raw = b._rawRow || [];
     const cells = headers.map((_, i) => {
       const v = String(raw[i] ?? '');
@@ -698,7 +1046,42 @@ function buildReportCSV(allRoomBookings, keptSet, period) {
     return cells.join(',');
   });
 
-  // UTF-8 BOM + ヘッダー + データ行
+  const text = '﻿' + headerRow + '\r\n' + dataRows.join('\r\n') + '\r\n';
+  return new TextEncoder().encode(text);
+}
+
+// =====================================================================
+// レポートCSV生成（UTF-8 BOM）— Airbnb 用
+// =====================================================================
+function buildAirbnbReportCSV(bookings, keptSet, period, listingName) {
+  const { startDate, endDate } = period;
+  const dayAfterEnd = addDays(endDate, 1);
+
+  const headerRow = '確認コード,チェックイン,チェックアウト,ゲスト数,国籍情報,報告ステータス';
+
+  const dataRows = bookings.map(b => {
+    const overlaps = b.checkout > startDate && b.checkin < dayAfterEnd;
+    let status;
+    if (!overlaps) {
+      status = '対象外（期間外）';
+    } else if (keptSet.has(b._rawRow)) {
+      const clipped = b.checkin < startDate || b.checkout > dayAfterEnd;
+      status = clipped ? '報告対象（日付修正あり）' : '報告対象';
+    } else {
+      status = '対象外（半分ルール）';
+    }
+
+    const raw = b._rawRow || [];
+    const code = String(raw[0] || '');
+    const natInfo = b.nationalityList && b.nationalityList.length > 0
+      ? b.nationalityList.map(mapNat).join('/')
+      : 'その他';
+
+    const ci = dateStr(b.checkin);
+    const co = dateStr(b.checkout);
+    return `${code},${ci},${co},${b.guests},${natInfo},${status}`;
+  });
+
   const text = '﻿' + headerRow + '\r\n' + dataRows.join('\r\n') + '\r\n';
   return new TextEncoder().encode(text);
 }
@@ -709,18 +1092,29 @@ function buildReportCSV(allRoomBookings, keptSet, period) {
 function buildCSVBytes(permitNum, periodId, bookings) {
   const dates      = getOccupiedDates(bookings);
   const stayDays   = dates.length;
-  const guestCount = bookings.reduce((s, b) => s + b.guests, 0); // 実宿泊者数（人数合計）
+  const guestCount = bookings.reduce((s, b) => s + b.guests, 0);
   const totalPersonNights = bookings.reduce((s, b) => s + b.effNights * b.guests, 0);
 
-  // 国籍集計（予約件数ベース）
+  // 国籍集計
   const natCount = {};
   NAT_COLS.forEach(n => natCount[n] = 0);
   for (const b of bookings) {
-    const n = mapNat(b.nationality);
-    natCount[n] = (natCount[n] || 0) + b.guests; // ゲスト人数分カウント
+    if (b.nationalityList && b.nationalityList.length > 0) {
+      // Sheetsから取得した per-guest 国籍リスト
+      const natList = b.nationalityList.slice(0, b.guests); // ゲスト数を上限に
+      natList.forEach(nat => {
+        const n = mapNat(nat);
+        natCount[n] = (natCount[n] || 0) + 1;
+      });
+      const remaining = b.guests - natList.length;
+      if (remaining > 0) natCount['その他'] = (natCount['その他'] || 0) + remaining;
+    } else {
+      // AirHost 等の単一国籍
+      const n = mapNat(b.nationality || '');
+      natCount[n] = (natCount[n] || 0) + b.guests;
+    }
   }
 
-  // データ行（ASCII文字のみ）
   const dataValues = [
     permitNum,
     periodId,
@@ -732,12 +1126,7 @@ function buildCSVBytes(permitNum, periodId, bookings) {
   ];
   const dataRow = dataValues.join(',');
 
-  // ヘッダー行: ヘッダー + 宿泊日数分の空列（データ行に合わせる）
   const trailingCommas = ','.repeat(dates.length);
-
-  // バイト列を組み立て
-  // ヘッダー行: Shift-JIS固定バイト + trailing commas + \r\n
-  // データ行: ASCII（そのままUint8Arrayへ）
   const headerTrailing = (trailingCommas + '\r\n').split('').map(c => c.charCodeAt(0));
   const dataBytes      = (dataRow + '\r\n').split('').map(c => c.charCodeAt(0));
 
@@ -758,8 +1147,18 @@ async function generate() {
   const errorEl = document.getElementById('fileError');
   errorEl.textContent = '';
 
-  if (!bookingData) {
+  const hasAirHost = bookingData && bookingData.length > 0;
+  const hasAirbnb  = airbnbGroups.length > 0;
+
+  if (!hasAirHost && !hasAirbnb) {
     errorEl.textContent = 'まず予約データをアップロードしてください。';
+    return;
+  }
+
+  // Airbnbグループでリスティング未選択のものがあれば警告
+  const unassigned = airbnbGroups.filter(g => !g.listingName);
+  if (unassigned.length > 0) {
+    errorEl.textContent = `Airbnb ファイル「${unassigned.map(g=>g.filename).join('」「')}」のリスティングが選択されていません。`;
     return;
   }
 
@@ -767,177 +1166,232 @@ async function generate() {
   const periodStr = document.getElementById('periodSelect').value;
   const reduce    = currentOption === 'reduce';
 
-  const period = getPeriod(year, periodStr);
+  const period   = getPeriod(year, periodStr);
   const periodId = `${year}_${periodStr}`;
 
-  // ① 部屋番号ベース（新馬場）の集計
-  const roomBookings = {};
-  // ② 新建物（BUILDING_MAP）の集計: buildingName → { roomNum → bookings }
-  const buildingBookings = {};
-  // ③ 物件名ベース（一戸建て）の集計
-  const propBookings = {};  // key: PROPERTY_PERMIT_MAP のname
-
-  for (const b of bookingData) {
-    const room = String(b.room).trim();
-    const pname = String(b.propertyName ?? '').toLowerCase();
-
-    if (room) {
-      // まずBUILDING_MAPで物件名を照合（新建物）
-      const building = BUILDING_MAP.find(bldg => pname.includes(bldg.keyword));
-      if (building) {
-        if (!building.rooms[room]) continue; // 旅館業等は除外
-        if (!buildingBookings[building.name]) buildingBookings[building.name] = {};
-        if (!buildingBookings[building.name][room]) buildingBookings[building.name][room] = [];
-        buildingBookings[building.name][room].push(b);
-      } else {
-        // 物件名でマッチしなかった → 新馬場として部屋番号で識別
-        if (!ROOM_PERMIT_MAP[room]) continue;
-        if (!roomBookings[room]) roomBookings[room] = [];
-        roomBookings[room].push(b);
-      }
-    } else {
-      // H列が空 → F列（物件名）で識別（一戸建て）
-      const matched = PROPERTY_PERMIT_MAP.find(p => pname.includes(p.keyword));
-      if (!matched) continue;
-      if (!propBookings[matched.name]) propBookings[matched.name] = [];
-      propBookings[matched.name].push(b);
-    }
-  }
-
-  const zip = new JSZip();
+  const zip     = new JSZip();
   const results = [];
 
-  // 新馬場の合算レポート用: 全予約とそのkeptRawRowsを蓄積
-  const shinagawaAllBookings = [];
-  const shinagawaKeptRawRows = new Set();
+  // ───────────────────────────────
+  // ① 新馬場（部屋番号ベース）
+  // ───────────────────────────────
+  if (hasAirHost) {
+    const roomBookings     = {};
+    const buildingBookings = {};
+    const propBookings     = {};
 
-  // ── 新馬場（部屋番号ベース）──
-  for (const room of Object.keys(ROOM_PERMIT_MAP).sort()) {
-    const permit   = ROOM_PERMIT_MAP[room];
-    const rawList  = roomBookings[room] || [];
-    const clipped  = processRoom(rawList, period);
+    for (const b of bookingData) {
+      const room  = String(b.room).trim();
+      const pname = String(b.propertyName ?? '').toLowerCase();
 
-    // 全予約をレポート用に蓄積（期間外も含む、新建物は除外）
-    const allForRoom = bookingData.filter(b => {
-      if (String(b.room).trim() !== room) return false;
-      const pn = String(b.propertyName ?? '').toLowerCase();
-      return !BUILDING_MAP.some(bldg => pn.includes(bldg.keyword));
-    });
-    shinagawaAllBookings.push(...allForRoom);
-
-    if (clipped.length === 0) {
-      results.push({ label: `新馬場${room}`, permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
-      continue;
+      if (room) {
+        const building = BUILDING_MAP.find(bldg => pname.includes(bldg.keyword));
+        if (building) {
+          if (!building.rooms[room]) continue;
+          if (!buildingBookings[building.name]) buildingBookings[building.name] = {};
+          if (!buildingBookings[building.name][room]) buildingBookings[building.name][room] = [];
+          buildingBookings[building.name][room].push(b);
+        } else {
+          if (!ROOM_PERMIT_MAP[room]) continue;
+          if (!roomBookings[room]) roomBookings[room] = [];
+          roomBookings[room].push(b);
+        }
+      } else {
+        const matched = PROPERTY_PERMIT_MAP.find(p => pname.includes(p.keyword));
+        if (!matched) continue;
+        if (!propBookings[matched.name]) propBookings[matched.name] = [];
+        propBookings[matched.name].push(b);
+      }
     }
 
-    let kept = clipped, removed = [];
-    if (reduce) {
-      const res = applyHalfRule(clipped, period.totalDays);
-      kept = res.kept;
-      removed = res.removed;
-    }
+    // 新馬場の合算レポート用
+    const shinagawaAllBookings = [];
+    const shinagawaKeptRawRows = new Set();
 
-    // 報告対象のrawRowをセットに追加
-    kept.forEach(b => shinagawaKeptRawRows.add(b._rawRow));
-
-    const occupiedDays = getOccupiedDates(kept).length;
-    const csvBytes = buildCSVBytes(permit, periodId, kept);
-    zip.file(`新馬場${room}_${periodId}.csv`, csvBytes);
-
-    results.push({
-      label: `新馬場${room}`, permit, status: removed.length > 0 ? 'reduced' : 'ok',
-      kept: kept.length, removed: removed.length,
-      days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
-    });
-  }
-
-  // 新馬場の合算レポートCSVを1ファイルで出力
-  if (shinagawaAllBookings.length > 0) {
-    zip.file(`新馬場_${periodId}_レポート.csv`,
-      buildReportCSV(shinagawaAllBookings, shinagawaKeptRawRows, period));
-  }
-
-  // ── 新建物（BUILDING_MAP: 物件名＋部屋番号ベース）──
-  for (const bldg of BUILDING_MAP) {
-    const bldgRooms = buildingBookings[bldg.name] || {};
-    const bldgAllBookings = [];
-    const bldgKeptRawRows = new Set();
-
-    for (const room of Object.keys(bldg.rooms).sort()) {
-      const permit  = bldg.rooms[room];
-      const rawList = bldgRooms[room] || [];
+    for (const room of Object.keys(ROOM_PERMIT_MAP).sort()) {
+      const permit  = ROOM_PERMIT_MAP[room];
+      const rawList = roomBookings[room] || [];
       const clipped = processRoom(rawList, period);
 
-      // レポート用に全予約を蓄積（期間外も含む）
-      const allForRoom = bookingData.filter(b =>
-        String(b.room).trim() === room &&
-        String(b.propertyName ?? '').toLowerCase().includes(bldg.keyword)
-      );
-      bldgAllBookings.push(...allForRoom);
+      const allForRoom = bookingData.filter(b => {
+        if (String(b.room).trim() !== room) return false;
+        const pn = String(b.propertyName ?? '').toLowerCase();
+        return !BUILDING_MAP.some(bldg => pn.includes(bldg.keyword));
+      });
+      shinagawaAllBookings.push(...allForRoom);
 
       if (clipped.length === 0) {
-        results.push({ label: `${bldg.prefix}${room}`, permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
+        results.push({ label: `新馬場${room}`, permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
         continue;
       }
 
       let kept = clipped, removed = [];
       if (reduce) {
         const res = applyHalfRule(clipped, period.totalDays);
-        kept = res.kept;
-        removed = res.removed;
+        kept = res.kept; removed = res.removed;
       }
-
-      kept.forEach(b => bldgKeptRawRows.add(b._rawRow));
+      kept.forEach(b => shinagawaKeptRawRows.add(b._rawRow));
 
       const occupiedDays = getOccupiedDates(kept).length;
-      const csvBytes = buildCSVBytes(permit, periodId, kept);
-      zip.file(`${bldg.prefix}${room}_${periodId}.csv`, csvBytes);
-
+      zip.file(`新馬場${room}_${periodId}.csv`, buildCSVBytes(permit, periodId, kept));
       results.push({
-        label: `${bldg.prefix}${room}`, permit, status: removed.length > 0 ? 'reduced' : 'ok',
-        kept: kept.length, removed: removed.length,
-        days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
+        label: `新馬場${room}`, permit, status: removed.length > 0 ? 'reduced' : 'ok',
+        kept: kept.length, removed: removed.length, days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
       });
     }
 
-    // 建物合算レポートCSVを1ファイルで出力
-    if (bldgAllBookings.length > 0) {
-      zip.file(`${bldg.prefix}_${periodId}_レポート.csv`,
-        buildReportCSV(bldgAllBookings, bldgKeptRawRows, period));
+    if (shinagawaAllBookings.length > 0) {
+      zip.file(`新馬場_${periodId}_レポート.csv`,
+        buildReportCSV(shinagawaAllBookings, shinagawaKeptRawRows, period));
+    }
+
+    // ── 新建物（BUILDING_MAP）──
+    for (const bldg of BUILDING_MAP) {
+      const bldgRooms       = buildingBookings[bldg.name] || {};
+      const bldgAllBookings = [];
+      const bldgKeptRawRows = new Set();
+
+      for (const room of Object.keys(bldg.rooms).sort()) {
+        const permit  = bldg.rooms[room];
+        const rawList = bldgRooms[room] || [];
+        const clipped = processRoom(rawList, period);
+
+        const allForRoom = bookingData.filter(b =>
+          String(b.room).trim() === room &&
+          String(b.propertyName ?? '').toLowerCase().includes(bldg.keyword)
+        );
+        bldgAllBookings.push(...allForRoom);
+
+        if (clipped.length === 0) {
+          results.push({ label: `${bldg.prefix}${room}`, permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
+          continue;
+        }
+
+        let kept = clipped, removed = [];
+        if (reduce) {
+          const res = applyHalfRule(clipped, period.totalDays);
+          kept = res.kept; removed = res.removed;
+        }
+        kept.forEach(b => bldgKeptRawRows.add(b._rawRow));
+
+        const occupiedDays = getOccupiedDates(kept).length;
+        zip.file(`${bldg.prefix}${room}_${periodId}.csv`, buildCSVBytes(permit, periodId, kept));
+        results.push({
+          label: `${bldg.prefix}${room}`, permit, status: removed.length > 0 ? 'reduced' : 'ok',
+          kept: kept.length, removed: removed.length, days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
+        });
+      }
+
+      if (bldgAllBookings.length > 0) {
+        zip.file(`${bldg.prefix}_${periodId}_レポート.csv`,
+          buildReportCSV(bldgAllBookings, bldgKeptRawRows, period));
+      }
+    }
+
+    // ── 一戸建て物件（物件名ベース）──
+    for (const prop of PROPERTY_PERMIT_MAP) {
+      const rawList = propBookings[prop.name] || [];
+      const clipped = processRoom(rawList, period);
+
+      if (clipped.length === 0) {
+        results.push({ label: prop.name, permit: prop.permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
+        continue;
+      }
+
+      let kept = clipped, removed = [];
+      if (reduce) {
+        const res = applyHalfRule(clipped, period.totalDays);
+        kept = res.kept; removed = res.removed;
+      }
+
+      const occupiedDays = getOccupiedDates(kept).length;
+      zip.file(`${prop.name}_${periodId}.csv`, buildCSVBytes(prop.permit, periodId, kept));
+
+      const allForProp = bookingData.filter(b =>
+        String(b.propertyName ?? '').toLowerCase().includes(prop.keyword));
+      const keptRawRowsProp = new Set(kept.map(b => b._rawRow));
+      zip.file(`${prop.name}_${periodId}_レポート.csv`,
+        buildReportCSV(allForProp, keptRawRowsProp, period));
+
+      results.push({
+        label: prop.name, permit: prop.permit, status: removed.length > 0 ? 'reduced' : 'ok',
+        kept: kept.length, removed: removed.length, days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
+      });
     }
   }
 
-  // ── 一戸建て物件（物件名ベース）──
-  for (const prop of PROPERTY_PERMIT_MAP) {
-    const rawList = propBookings[prop.name] || [];
+  // ───────────────────────────────
+  // ② Airbnb リスティング（神楽坂belle ville 等）
+  // ───────────────────────────────
+  for (let idx = 0; idx < airbnbGroups.length; idx++) {
+    const group = airbnbGroups[idx];
+    if (!group.listingName || !group.permit) continue;
+
+    // 宿泊者名簿を取得
+    let sheetLookup = {};
+    const warnEl = document.getElementById(`ab_sheets_warn_${idx}`);
+
+    if (group.sheetsUrl) {
+      const fetched = await fetchSheetsData(group.sheetsUrl);
+      if (fetched && Object.keys(fetched).length > 0) {
+        sheetLookup = fetched;
+        if (warnEl) { warnEl.style.display = 'none'; }
+      } else {
+        // URL取得失敗 → ファイルにフォールバック
+        if (group.sheetsFile) {
+          const fromFile = await loadSheetsFile(group.sheetsFile);
+          if (fromFile) sheetLookup = fromFile;
+        }
+        if (warnEl) {
+          warnEl.textContent = 'URLからの自動取得に失敗しました。'
+            + (group.sheetsFile ? 'アップロードされたCSVを使用しました。' : '国籍は「その他」で処理します。');
+          warnEl.className = 'airbnb-info warn';
+          warnEl.style.display = 'block';
+        }
+      }
+    } else if (group.sheetsFile) {
+      const fromFile = await loadSheetsFile(group.sheetsFile);
+      if (fromFile) sheetLookup = fromFile;
+    }
+    // どちらもなければ sheetLookup = {} のまま → 全国籍「その他」
+
+    // 予約を処理
+    const rawList = group.bookings;
     const clipped = processRoom(rawList, period);
 
-    if (clipped.length === 0) {
-      results.push({ label: prop.name, permit: prop.permit, status: 'nodata', kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2) });
-      continue;
+    // Sheetsデータで国籍を付与
+    if (Object.keys(sheetLookup).length > 0) {
+      enrichFromSheets(clipped, sheetLookup);
     }
 
     let kept = clipped, removed = [];
     if (reduce) {
       const res = applyHalfRule(clipped, period.totalDays);
-      kept = res.kept;
-      removed = res.removed;
+      kept = res.kept; removed = res.removed;
     }
 
+    const keptSet      = new Set(kept.map(b => b._rawRow));
     const occupiedDays = getOccupiedDates(kept).length;
-    const csvBytes = buildCSVBytes(prop.permit, periodId, kept);
-    const filename = `${prop.name}_${periodId}.csv`;
-    zip.file(filename, csvBytes);
 
-    // レポートCSV
-    const allForProp = bookingData.filter(b =>
-      String(b.propertyName ?? '').toLowerCase().includes(prop.keyword));
-    const keptRawRowsProp = new Set(kept.map(b => b._rawRow));
-    zip.file(`${prop.name}_${periodId}_レポート.csv`,
-      buildReportCSV(allForProp, keptRawRowsProp, period));
+    if (clipped.length === 0) {
+      results.push({
+        label: group.listingName, permit: group.permit, status: 'nodata',
+        kept: 0, removed: 0, days: 0, maxDays: Math.floor(period.totalDays / 2)
+      });
+      continue;
+    }
+
+    // 申請用 CSV（Shift-JIS）
+    zip.file(`${group.listingName}_${periodId}.csv`,
+      buildCSVBytes(group.permit, periodId, kept));
+
+    // レポート CSV（UTF-8 BOM）
+    zip.file(`${group.listingName}_${periodId}_レポート.csv`,
+      buildAirbnbReportCSV(rawList, keptSet, period, group.listingName));
 
     results.push({
-      label: prop.name, permit: prop.permit, status: removed.length > 0 ? 'reduced' : 'ok',
+      label: group.listingName, permit: group.permit,
+      status: removed.length > 0 ? 'reduced' : 'ok',
       kept: kept.length, removed: removed.length,
       days: occupiedDays, maxDays: Math.floor(period.totalDays / 2)
     });
@@ -951,10 +1405,10 @@ async function generate() {
 }
 
 function showResults(results, periodId, reduced, totalDays) {
-  const card = document.getElementById('resultCard');
+  const card   = document.getElementById('resultCard');
   const header = document.getElementById('resultHeader');
-  const sub = document.getElementById('resultSub');
-  const list = document.getElementById('resultList');
+  const sub    = document.getElementById('resultSub');
+  const list   = document.getElementById('resultList');
   const notice = document.getElementById('resultNotice');
 
   const generated = results.filter(r => r.status !== 'nodata');
@@ -968,13 +1422,13 @@ function showResults(results, periodId, reduced, totalDays) {
 
     let tagHtml, statsHtml;
     if (r.status === 'nodata') {
-      tagHtml  = '<span class="ri-tag nodata">予約なし</span>';
+      tagHtml   = '<span class="ri-tag nodata">予約なし</span>';
       statsHtml = '<span style="color:#ccc">—</span>';
     } else if (r.status === 'reduced') {
-      tagHtml  = `<span class="ri-tag reduced">削除: ${r.removed}件</span>`;
+      tagHtml   = `<span class="ri-tag reduced">削除: ${r.removed}件</span>`;
       statsHtml = `宿泊日数 ${r.days}日 / ${r.kept}予約`;
     } else {
-      tagHtml  = '<span class="ri-tag ok">OK</span>';
+      tagHtml   = '<span class="ri-tag ok">OK</span>';
       statsHtml = `宿泊日数 ${r.days}日 / ${r.kept}予約`;
     }
 
@@ -996,10 +1450,10 @@ function showResults(results, periodId, reduced, totalDays) {
 
 function downloadZip() {
   if (!generatedZipBlob) return;
-  const year = document.getElementById('yearInput').value;
+  const year   = document.getElementById('yearInput').value;
   const period = document.getElementById('periodSelect').value;
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(generatedZipBlob);
+  a.href     = URL.createObjectURL(generatedZipBlob);
   a.download = `宿泊実績_${year}_${period}.zip`;
   a.click();
   URL.revokeObjectURL(a.href);
