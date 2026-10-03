@@ -555,7 +555,14 @@ async function generate() {
     const room  = String(b.room).trim();
     const pname = String(b.propertyName??'').toLowerCase();
     if (room) {
-      const building = BUILDING_MAP.find(bldg => pname.includes(bldg.keyword));
+      let building = BUILDING_MAP.find(bldg => pname.includes(bldg.keyword));
+      if (!building && !pname && !/^\d+$/.test(room)) {
+        // 物件名が空欄の行（期間をまたぐ予約などでデータが欠けているケース）は、
+        // 部屋番号が数字以外（＝新馬場やLa Vie/Vista Fujimiの番号と衝突しない）かつ
+        // どのBUILDING_MAPにもその部屋番号が1つしかなければ、部屋番号だけで判定する
+        const candidates = BUILDING_MAP.filter(bldg => bldg.rooms[room]);
+        if (candidates.length === 1) building = candidates[0];
+      }
       if (building) {
         if (!building.rooms[room]) continue;
         if (!buildingBookings[building.name]) buildingBookings[building.name]={};
