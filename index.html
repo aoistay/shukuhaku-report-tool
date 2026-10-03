@@ -206,7 +206,7 @@ h1 {
 <body>
 <div class="container">
   <h1>🏨 宿泊実績報告ツール</h1>
-  <div class="subtitle">新馬場・La Vie Itabashi・Vista FUJIMI・R.Shinjuku — 民泊届出番号対象物件のCSVを自動生成します</div>
+  <div class="subtitle">新馬場・La Vie Itabashi・Vista FUJIMI・R.Shinjuku・神楽坂belle ville — 民泊届出番号対象物件のCSVを自動生成します</div>
 
   <div class="card">
     <div class="card-title">
@@ -295,6 +295,14 @@ const BUILDING_MAP = [
   {
     keyword: 'vista fujimi', name: 'VistaFujimi', prefix: 'VistaFujimi',
     rooms: { '201':'M130065328','202':'M130065329','203':'M130065330','401':'M130065331','402':'M130065332','403':'M130065333' }
+  },
+  {
+    keyword: '神楽坂belle ville', name: 'Kagurazaka', prefix: '神楽坂belle ville',
+    rooms: {
+      'A':'M130056124','A+':'M130056125','B':'M130056126','B+':'M130056127',
+      'C':'M130056128','C+':'M130056129','D':'M130056130','D+':'M130056131',
+      'Z':'M130056132','E':'M130056137','E+':'M130056139'
+    }
   },
 ];
 
@@ -577,7 +585,11 @@ async function generate() {
       return !BUILDING_MAP.some(bldg=>pn.includes(bldg.keyword));
     });
     shinagawaAll.push(...allForRoom);
-    if (clipped.length===0) { results.push({label:`新馬場${room}`,permit,status:'nodata',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)}); continue; }
+    if (clipped.length===0) {
+      zip.file(`新馬場${room}_${periodId}.csv`, buildCSVBytes(permit,periodId,[]));
+      results.push({label:`新馬場${room}`,permit,status:'zero',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)});
+      continue;
+    }
     let kept=clipped,removed=[];
     if (reduce) { const r=applyHalfRule(clipped,period.totalDays); kept=r.kept; removed=r.removed; }
     kept.forEach(b=>shinagawaKept.add(b._rawRow));
@@ -592,7 +604,11 @@ async function generate() {
       const permit=bldg.rooms[room], rawList=bldgRooms[room]||[], clipped=processRoom(rawList,period);
       const allForRoom=bookingData.filter(b=>String(b.room).trim()===room&&String(b.propertyName??'').toLowerCase().includes(bldg.keyword));
       bldgAll.push(...allForRoom);
-      if (clipped.length===0) { results.push({label:`${bldg.prefix}${room}`,permit,status:'nodata',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)}); continue; }
+      if (clipped.length===0) {
+        zip.file(`${bldg.prefix}${room}_${periodId}.csv`, buildCSVBytes(permit,periodId,[]));
+        results.push({label:`${bldg.prefix}${room}`,permit,status:'zero',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)});
+        continue;
+      }
       let kept=clipped,removed=[];
       if (reduce) { const r=applyHalfRule(clipped,period.totalDays); kept=r.kept; removed=r.removed; }
       kept.forEach(b=>bldgKept.add(b._rawRow));
@@ -604,7 +620,11 @@ async function generate() {
 
   for (const prop of PROPERTY_PERMIT_MAP) {
     const rawList=propBookings[prop.name]||[], clipped=processRoom(rawList,period);
-    if (clipped.length===0) { results.push({label:prop.name,permit:prop.permit,status:'nodata',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)}); continue; }
+    if (clipped.length===0) {
+      zip.file(`${prop.name}_${periodId}.csv`, buildCSVBytes(prop.permit,periodId,[]));
+      results.push({label:prop.name,permit:prop.permit,status:'zero',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)});
+      continue;
+    }
     let kept=clipped,removed=[];
     if (reduce) { const r=applyHalfRule(clipped,period.totalDays); kept=r.kept; removed=r.removed; }
     zip.file(`${prop.name}_${periodId}.csv`, buildCSVBytes(prop.permit,periodId,kept));
@@ -619,14 +639,14 @@ async function generate() {
 
 function showResults(results, periodId, reduced, totalDays) {
   const card=document.getElementById('resultCard');
-  document.getElementById('resultHeader').textContent = `${results.filter(r=>r.status!=='nodata').length} 件のCSVを生成しました`;
+  document.getElementById('resultHeader').textContent = `${results.length} 件のCSVを生成しました`;
   document.getElementById('resultSub').textContent = `報告期間: ${periodId}　期間日数: ${totalDays}日　上限: ${Math.floor(totalDays/2)}日`;
   const list=document.getElementById('resultList');
   list.innerHTML='';
   for (const r of results) {
     const el=document.createElement('div'); el.className='result-item';
     let tagHtml,statsHtml;
-    if (r.status==='nodata') { tagHtml='<span class="ri-tag nodata">予約なし</span>'; statsHtml='<span style="color:#ccc">—</span>'; }
+    if (r.status==='zero') { tagHtml='<span class="ri-tag nodata">0件（ゼロ報告）</span>'; statsHtml='宿泊日数 0日 / 0予約'; }
     else if (r.status==='reduced') { tagHtml=`<span class="ri-tag reduced">削除: ${r.removed}件</span>`; statsHtml=`宿泊日数 ${r.days}日 / ${r.kept}予約`; }
     else { tagHtml='<span class="ri-tag ok">OK</span>'; statsHtml=`宿泊日数 ${r.days}日 / ${r.kept}予約`; }
     el.innerHTML=`<div class="ri-room">${r.label}</div><div class="ri-stats">${statsHtml}</div>${tagHtml}`;
