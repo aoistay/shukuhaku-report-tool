@@ -577,29 +577,33 @@ async function generate() {
   const zip=new JSZip(), results=[];
   const shinagawaAll=[], shinagawaKept=new Set();
 
-  for (const room of Object.keys(ROOM_PERMIT_MAP).sort()) {
-    const permit=ROOM_PERMIT_MAP[room], rawList=roomBookings[room]||[], clipped=processRoom(rawList,period);
-    const allForRoom=bookingData.filter(b=>{
-      if(String(b.room).trim()!==room) return false;
-      const pn=String(b.propertyName??'').toLowerCase();
-      return !BUILDING_MAP.some(bldg=>pn.includes(bldg.keyword));
-    });
-    shinagawaAll.push(...allForRoom);
-    if (clipped.length===0) {
-      zip.file(`新馬場${room}_${periodId}.csv`, buildCSVBytes(permit,periodId,[]));
-      results.push({label:`新馬場${room}`,permit,status:'zero',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)});
-      continue;
+  const shinagawaHasData = Object.keys(roomBookings).length > 0;
+  if (shinagawaHasData) {
+    for (const room of Object.keys(ROOM_PERMIT_MAP).sort()) {
+      const permit=ROOM_PERMIT_MAP[room], rawList=roomBookings[room]||[], clipped=processRoom(rawList,period);
+      const allForRoom=bookingData.filter(b=>{
+        if(String(b.room).trim()!==room) return false;
+        const pn=String(b.propertyName??'').toLowerCase();
+        return !BUILDING_MAP.some(bldg=>pn.includes(bldg.keyword));
+      });
+      shinagawaAll.push(...allForRoom);
+      if (clipped.length===0) {
+        zip.file(`新馬場${room}_${periodId}.csv`, buildCSVBytes(permit,periodId,[]));
+        results.push({label:`新馬場${room}`,permit,status:'zero',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)});
+        continue;
+      }
+      let kept=clipped,removed=[];
+      if (reduce) { const r=applyHalfRule(clipped,period.totalDays); kept=r.kept; removed=r.removed; }
+      kept.forEach(b=>shinagawaKept.add(b._rawRow));
+      zip.file(`新馬場${room}_${periodId}.csv`, buildCSVBytes(permit,periodId,kept));
+      results.push({label:`新馬場${room}`,permit,status:removed.length>0?'reduced':'ok',kept:kept.length,removed:removed.length,days:getOccupiedDates(kept).length,maxDays:Math.floor(period.totalDays/2)});
     }
-    let kept=clipped,removed=[];
-    if (reduce) { const r=applyHalfRule(clipped,period.totalDays); kept=r.kept; removed=r.removed; }
-    kept.forEach(b=>shinagawaKept.add(b._rawRow));
-    zip.file(`新馬場${room}_${periodId}.csv`, buildCSVBytes(permit,periodId,kept));
-    results.push({label:`新馬場${room}`,permit,status:removed.length>0?'reduced':'ok',kept:kept.length,removed:removed.length,days:getOccupiedDates(kept).length,maxDays:Math.floor(period.totalDays/2)});
+    if (shinagawaAll.length>0) zip.file(`新馬場_${periodId}_レポート.csv`, buildReportCSV(shinagawaAll,shinagawaKept,period));
   }
-  if (shinagawaAll.length>0) zip.file(`新馬場_${periodId}_レポート.csv`, buildReportCSV(shinagawaAll,shinagawaKept,period));
 
   for (const bldg of BUILDING_MAP) {
-    const bldgRooms=buildingBookings[bldg.name]||{}, bldgAll=[], bldgKept=new Set();
+    if (!buildingBookings[bldg.name]) continue; // この建物のデータが一切アップロードされていない
+    const bldgRooms=buildingBookings[bldg.name], bldgAll=[], bldgKept=new Set();
     for (const room of Object.keys(bldg.rooms).sort()) {
       const permit=bldg.rooms[room], rawList=bldgRooms[room]||[], clipped=processRoom(rawList,period);
       const allForRoom=bookingData.filter(b=>String(b.room).trim()===room&&String(b.propertyName??'').toLowerCase().includes(bldg.keyword));
@@ -619,7 +623,8 @@ async function generate() {
   }
 
   for (const prop of PROPERTY_PERMIT_MAP) {
-    const rawList=propBookings[prop.name]||[], clipped=processRoom(rawList,period);
+    if (!propBookings[prop.name]) continue; // この物件のデータが一切アップロードされていない
+    const rawList=propBookings[prop.name], clipped=processRoom(rawList,period);
     if (clipped.length===0) {
       zip.file(`${prop.name}_${periodId}.csv`, buildCSVBytes(prop.permit,periodId,[]));
       results.push({label:prop.name,permit:prop.permit,status:'zero',kept:0,removed:0,days:0,maxDays:Math.floor(period.totalDays/2)});
